@@ -636,6 +636,44 @@ async fn wait_for_apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::MockBackboard;
+
+    #[tokio::test]
+    async fn failed_apply_returns_an_error() {
+        let server = MockBackboard::spawn();
+        // Raw GraphQL requests do not include an operation name.
+        server.stub(
+            "",
+            json!({
+                "environmentApplyChangeSet": {
+                    "id": "iac-change-set/environment-id/change-set-id",
+                    "status": "failed",
+                    "deploymentId": null,
+                    "stagedPatchId": null,
+                    "diagnostics": [{
+                        "message": "Invalid RailwayChangeSet patch"
+                    }],
+                    "changes": []
+                }
+            }),
+        );
+
+        let result = apply_change_set(
+            &reqwest::Client::new(),
+            &server.url(),
+            "environment-id",
+            &json!({ "changes": [] }),
+            None,
+        )
+        .await;
+
+        let error = result.expect_err("a failed apply must return an error");
+        let message = error.to_string();
+        assert!(
+            message.contains("Invalid RailwayChangeSet patch"),
+            "unexpected error: {message}"
+        );
+    }
 
     #[test]
     fn project_services_query_reads_nested_connection() {
