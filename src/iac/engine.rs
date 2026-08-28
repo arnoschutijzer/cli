@@ -590,13 +590,19 @@ pub(crate) async fn apply_change_set(
         rest: Value,
     }
     let applied = post_graphql_raw::<ApplyQuery, _>(client, endpoint, mutation, variables).await?;
-    if applied.result.status != "applying" {
+    let result = if applied.result.status != "applying" {
         let mut value = serde_json::to_value(&applied.result.rest)?;
         value["id"] = json!(applied.result.id);
         value["status"] = json!(applied.result.status);
-        return Ok(value);
+        value
+    } else {
+        wait_for_apply(client, endpoint, environment_id, &applied.result.id).await?
+    };
+    if result.get("status").and_then(Value::as_str) == Some("failed") {
+        let diagnostics = result.get("diagnostics").cloned().unwrap_or(json!([]));
+        bail!("Railway ChangeSet apply failed: {diagnostics}");
     }
-    wait_for_apply(client, endpoint, environment_id, &applied.result.id).await
+    Ok(result)
 }
 
 async fn wait_for_apply(
@@ -646,6 +652,19 @@ mod tests {
             "",
             json!({
                 "environmentApplyChangeSet": {
+                    "id": "iac-change-set/environment-id/change-set-id",
+                    "status": "applying",
+                    "deploymentId": null,
+                    "stagedPatchId": null,
+                    "diagnostics": [],
+                    "changes": []
+                }
+            }),
+        );
+        server.stub(
+            "",
+            json!({
+                "environmentChangeSetApply": {
                     "id": "iac-change-set/environment-id/change-set-id",
                     "status": "failed",
                     "deploymentId": null,
